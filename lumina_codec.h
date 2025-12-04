@@ -69,12 +69,40 @@ struct EncodedFunction {
     uint32_t    unk2 = 0;           // reserved, keep 0
 };
 
-// Legacy Hello (0x0d) payload: dd(protocol)=5, dd(len=0), 6x00, dd(0) ; no username/password (=> "guest")
+// Forward declarations for BN API functions (from binaryninjacore.h)
+extern "C" {
+    char* BNGetVersionString(void);
+    uint32_t BNGetBuildId(void);
+    uint32_t BNGetCurrentCoreABIVersion(void);
+    void BNFreeString(char*);
+}
+
+// Build license identification string: "BINARYNINJA-{version}.{buildId}-{abiVersion}"
+// e.g., "BINARYNINJA-5.0.8718-151"
+inline std::string build_license_id() {
+    char* verStr = BNGetVersionString();
+    uint32_t buildId = BNGetBuildId();
+    uint32_t abiVersion = BNGetCurrentCoreABIVersion();
+
+    std::string version = verStr ? verStr : "unknown";
+    if (verStr) BNFreeString(verStr);
+
+    // Format: BINARYNINJA-{version}.{buildId}-{abiVersion}
+    std::string result = "BINARYNINJA-" + version + "." + std::to_string(buildId) + "-" + std::to_string(abiVersion);
+    return result;
+}
+
+// Legacy Hello (0x0d) payload: dd(protocol), var_bytes(license_data), 6x00 lic_number, dd(0) unk2
+// License data identifies the client to the Lumina server
 inline std::vector<uint8_t> encode_hello_payload(uint32_t protocol_version = 5) {
     std::vector<uint8_t> p;
     pack_dd_into(p, protocol_version);
-    pack_var_bytes(p, nullptr, 0);                 // empty license_data
-    p.insert(p.end(), 6, 0);                       // lic_number (6 bytes)
+
+    // Build license identification string
+    std::string licenseId = build_license_id();
+    pack_var_bytes(p, reinterpret_cast<const uint8_t*>(licenseId.data()), licenseId.size());
+
+    p.insert(p.end(), 6, 0);                       // lic_number (6 bytes, zeroed)
     pack_dd_into(p, 0);                            // unk2
     // omit user/pass to default to "guest" (per server)
     return p;
@@ -115,7 +143,7 @@ inline std::vector<uint8_t> encode_push_payload(
 }
 
 // Encode legacy PullMetadata (0x0e)
-// unk0=0; unk1 (u32 vec) empty; funcs = array of {func_unk0=0, mb_hash: dd-len(16)+bytes}
+// unk0=1 (IDA uses 1); unk1 (u32 vec) empty; funcs = array of {func_unk0=0, mb_hash: dd-len(16)+bytes}
 inline std::vector<uint8_t> encode_pull_payload(
     uint32_t unk0,
     const std::vector<std::array<uint8_t,16>>& hashes

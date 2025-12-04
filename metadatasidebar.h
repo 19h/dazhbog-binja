@@ -77,6 +77,7 @@ protected:
 
 private Q_SLOTS:
 	void onRowDoubleClicked(const QModelIndex& index);
+	void onRowClicked(const QModelIndex& index);
 	void applyMetadataToSelected();
 	void navigateToFunction();
 };
@@ -98,9 +99,12 @@ class FunctionMetadataSidebarWidget : public SidebarWidget
 	QPushButton* m_pushSelected;
 	QPushButton* m_pushAll;
 	QPushButton* m_pullSelected;
+	QPushButton* m_pullAll;
 	QPushButton* m_applyPulled;
+	QPushButton* m_applyPulledAll;
 
-	// Cache pulled TLV decoded per function start address
+public:
+	// Cache pulled TLV decoded per function start address (public for helper access)
 	struct PullCacheEntry {
 		bool have = false;
 		lumina::ParsedTLV tlv;
@@ -109,12 +113,18 @@ class FunctionMetadataSidebarWidget : public SidebarWidget
 		std::string remoteName;
 		std::vector<uint8_t> raw;
 	};
+
+private:
 	std::unordered_map<uint64_t, PullCacheEntry> m_pullCache;
+
+	// Track if we've computed CalcRel for all functions after initial analysis
+	bool m_hasComputedInitialCalcRel = false;
 
 public:
 	FunctionMetadataSidebarWidget(ViewFrame* frame, BinaryViewRef data);
 
 	virtual void notifyViewChanged(ViewFrame* frame) override;
+	virtual void notifyOffsetChanged(uint64_t offset) override;
 	virtual void notifyFontChanged() override;
 
 public Q_SLOTS:
@@ -127,7 +137,11 @@ public Q_SLOTS:
 	void pullSelectedLumina();
 	void pullAllLumina();
 	void applyPulledToSelected();
+	void applyPulledToAll();
 	void batchDiffAndApplySelected();
+
+private:
+	void computeCalcRelForAllFunctions();
 };
 
 // Sidebar widget type for registration

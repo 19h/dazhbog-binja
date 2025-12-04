@@ -7,6 +7,15 @@
 #include <cstdint>
 #include <string>
 
+// Check for SSL support at compile time
+#ifndef QT_NO_SSL
+#include <QSslSocket>
+#include <QSslConfiguration>
+#define LUMINA_HAS_SSL 1
+#else
+#define LUMINA_HAS_SSL 0
+#endif
+
 namespace lumina {
 
 struct PulledFunction {
@@ -16,13 +25,17 @@ struct PulledFunction {
     std::vector<uint8_t> data; // TLV bytes
 };
 
-// Minimal legacy client for Hello (0x0d) and PushMetadata (0x10)
+// Client for Lumina protocol with TLS support
 class Client : public QObject {
     Q_OBJECT
 
 public:
-    explicit Client(const QString& host, quint16 port, QObject* parent = nullptr)
-        : QObject(parent), m_host(host), m_port(port) {}
+    explicit Client(const QString& host, quint16 port, QObject* parent = nullptr,
+                    bool useTls = false, bool verifyTls = true)
+        : QObject(parent), m_host(host), m_port(port), m_useTls(useTls), m_verifyTls(verifyTls) {}
+
+    // Static factory method using settings
+    static Client* fromSettings(QObject* parent = nullptr);
 
     // Sends Hello + Push; returns true on success, fills statuses (0=new? per server doc: PushResult is array of u32)
     bool helloAndPush(const std::vector<uint8_t>& helloPayload,
@@ -42,6 +55,11 @@ public:
 private:
     QString m_host;
     quint16 m_port;
+    bool m_useTls;
+    bool m_verifyTls;
+
+    // Create and connect socket (returns QTcpSocket* or QSslSocket* depending on m_useTls)
+    QTcpSocket* createSocket(QString* err, int timeoutMs);
 
     static QByteArray makePacket(uint8_t type, const std::vector<uint8_t>& payload) {
         QByteArray a;
