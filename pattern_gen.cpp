@@ -119,6 +119,9 @@ InstructionMask X86MaskGenerator::getMask(
         }
     };
 
+    // Query relocation once per instruction for immediate masking heuristics
+    bool hasReloc = bv && !bv->GetRelocationsAt(addr).empty();
+
     // Mask displacement for RIP-relative references to external addresses and FS/GS segments
     bool maskDisp = false;
     for (size_t i = 0; i < x86.op_count; i++) {
@@ -150,12 +153,52 @@ InstructionMask X86MaskGenerator::getMask(
     }
 
     // Mask immediates that look like external addresses
+    bool isBranchOrCall = cs_insn_group(m_capstone, &insn[0], CS_GRP_JUMP) ||
+                          cs_insn_group(m_capstone, &insn[0], CS_GRP_CALL);
+    if (!isBranchOrCall) {
+        // Fallback based on mnemonic to cover cases where Capstone groups are missing
+        std::string mnem = insn[0].mnemonic ? insn[0].mnemonic : "";
+        if (!mnem.empty() && (mnem[0] == 'j' || mnem == "call")) {
+            isBranchOrCall = true;
+        }
+    }
+
+    // Special-case CALL: mask if it targets an external address
+    bool isCall = cs_insn_group(m_capstone, &insn[0], CS_GRP_CALL);
+    if (!isCall) {
+        std::string mnem = insn[0].mnemonic ? insn[0].mnemonic : "";
+        if (mnem == "call") {
+            isCall = true;
+        }
+    }
+
+    if (isCall && enc.imm_offset && enc.imm_size) {
+        for (size_t i = 0; i < x86.op_count; i++) {
+            const cs_x86_op& op = x86.operands[i];
+            if (op.type == X86_OP_IMM) {
+                uint64_t target = static_cast<uint64_t>(op.imm);
+                auto seg = bv ? bv->GetSegmentAt(target) : nullptr;
+                bool isExec = seg && ((seg->GetFlags() & SegmentExecutable) != 0);
+                if (validRef(target) && (isExec || hasReloc)) {
+                    addMask(enc.imm_offset, enc.imm_size);
+                }
+                break;
+            }
+        }
+    }
+
+    // Mask other immediates that look like external addresses (never for jumps)
     bool maskImm = false;
     for (size_t i = 0; i < x86.op_count; i++) {
         const cs_x86_op& op = x86.operands[i];
         if (op.type == X86_OP_IMM) {
+            if (isBranchOrCall) {
+                continue;  // Do not mask branch/jump displacements
+            }
             uint64_t immVal = static_cast<uint64_t>(op.imm);
-            if (validRef(immVal)) {
+            auto seg = bv ? bv->GetSegmentAt(immVal) : nullptr;
+            bool isExec = seg && ((seg->GetFlags() & SegmentExecutable) != 0);
+            if (validRef(immVal) && (hasReloc || isExec)) {
                 maskImm = true;
                 break;
             }
